@@ -56,7 +56,7 @@ h1 em { color: var(--green); font-style: normal; }
 .hero-proof svg { color: var(--green); }
 
 .converter-card { background: rgba(255,255,252,.94); border: 1px solid rgba(210,220,207,.9); border-radius: 24px; box-shadow: 0 24px 70px rgba(39,60,48,.11); padding: 16px; scroll-margin-top: 20px; }
-.tool-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-bottom: 14px; padding: 5px; border-radius: 14px; background: #edf1eb; }
+.tool-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 14px; padding: 5px; border-radius: 14px; background: #edf1eb; }
 .tool-tabs button { position: relative; min-height: 57px; display: flex; align-items: center; gap: 10px; padding: 8px 14px; border: 1px solid transparent; border-radius: 10px; color: #69756d; background: transparent; text-align: left; }
 .tool-tabs button > svg { flex: 0 0 auto; }
 .tool-tabs button span { flex: 1; }
@@ -98,6 +98,9 @@ h1 em { color: var(--green); font-style: normal; }
 .file-panel-head { display: flex; justify-content: space-between; align-items: center; padding: 13px 15px; border-bottom: 1px solid var(--line); background: #fafbf8; font-size: 13px; }
 .file-panel-head span { color: var(--muted); font-weight: 400; }
 .panel-actions { display: flex; align-items: center; gap: 13px; }
+.zip-button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border: 1px solid #b9d1c0; border-radius: 8px; color: var(--green); background: #edf8f1; font-size: 10px; font-weight: 700; }
+.zip-button:hover:not(:disabled) { border-color: var(--green); background: #e4f3e9; }
+.zip-button:disabled { opacity: .6; cursor: wait; }
 .speed-control { display: flex; align-items: center; gap: 5px; color: var(--green); font-size: 11px; font-weight: 700; }
 .speed-control select { max-width: 112px; padding: 5px 21px 5px 7px; border: 1px solid #cfddd1; border-radius: 7px; color: var(--green); background: #f5faf6; font-size: 11px; font-weight: 700; outline: none; }
 .speed-control select:disabled { opacity: .55; }
@@ -122,6 +125,16 @@ h1 em { color: var(--green); font-style: normal; }
 
 .controls { display: grid; grid-template-columns: 1.1fr 1fr auto; gap: 22px; align-items: end; padding: 24px 9px 7px; }
 .compress-controls { grid-template-columns: 1fr 1fr auto; }
+.resize-controls { grid-template-columns: 1.15fr .75fr 1fr auto; gap: 14px; }
+.dimension-fields { height: 44px; display: flex; align-items: center; gap: 7px; }
+.dimension-fields > label { height: 44px; flex: 1; display: flex; align-items: center; gap: 6px; margin: 0; padding: 0 9px; border: 1px solid #d9e0d7; border-radius: 10px; color: #849087; background: white; font-size: 9px; }
+.dimension-fields input { min-width: 0; width: 100%; border: 0; outline: 0; color: #27312b; background: transparent; font-weight: 700; }
+.dimension-fields > span, .dimension-fields > small { color: #8a948d; font-size: 11px; }
+.resize-options > label:first-child { margin-bottom: 6px; }
+.resize-options .check-option { display: flex; align-items: center; gap: 7px; margin: 4px 0 0; color: #667269; font-size: 10px; font-weight: 600; cursor: pointer; }
+.check-option input { position: absolute; opacity: 0; pointer-events: none; }
+.check-option > span { width: 17px; height: 17px; display: grid; place-items: center; flex: 0 0 auto; border: 1px solid #bdcabe; border-radius: 5px; color: transparent; background: white; }
+.check-option input:checked + span { border-color: var(--green); color: white; background: var(--green); }
 .compression-summary { min-height: 46px; display: flex; align-items: center; gap: 10px; padding: 8px 11px; border: 1px solid #dce5dc; border-radius: 10px; color: var(--green); background: #f4faf6; }
 .compression-summary svg { flex: 0 0 auto; }
 .compression-summary strong, .compression-summary span { display: block; }
@@ -218,6 +231,7 @@ footer p { flex: 1; }
   .dropzone { min-height: 235px; padding: 24px; text-align: center; }
   .controls { grid-template-columns: 1fr; gap: 18px; padding: 20px 5px 5px; }
   .compress-controls { grid-template-columns: 1fr; }
+  .resize-controls { grid-template-columns: 1fr; }
   .tool-tabs button { padding: 8px 10px; }
   .tool-tabs button { justify-content: center; text-align: center; }
   .tool-tabs button > svg { display: none; }
@@ -233,6 +247,8 @@ footer p { flex: 1; }
   .status { display: none; }
   .speed-control > span { display: none; }
   .speed-control select { max-width: 94px; }
+  .zip-button { padding: 6px; }
+  .zip-button { font-size: 0; }
   footer { flex-wrap: wrap; gap: 7px 14px; padding: 20px; }
   footer p { flex-basis: calc(100% - 100px); }
   footer small { width: 100%; }
