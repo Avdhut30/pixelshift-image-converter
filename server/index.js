@@ -5,6 +5,7 @@ import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import { OAuth2Client } from 'google-auth-library'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -17,6 +18,8 @@ const port = Number(process.env.PORT || 8787)
 const host = process.env.HOST || '127.0.0.1'
 const isProduction = process.env.NODE_ENV === 'production'
 const jwtSecret = process.env.JWT_SECRET || 'pixelshift-local-development-secret-change-me'
+const googleClientId = String(process.env.GOOGLE_CLIENT_ID || '').trim()
+const googleClient = googleClientId ? new OAuth2Client(googleClientId) : null
 const aiAssetBase = 'https://staticimgly.com/@imgly/background-removal-data/1.7.0/dist/'
 
 if (isProduction && !process.env.JWT_SECRET) {
@@ -49,7 +52,7 @@ const authenticate = async (request, response, next) => {
 
 const app = express()
 app.disable('x-powered-by')
-app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: { policy: 'require-corp' } }))
+app.use(helmet({ contentSecurityPolicy: false, crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' }, crossOriginEmbedderPolicy: false }))
 app.use(express.json({ limit: '20kb' }))
 app.use(cookieParser())
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many attempts. Please wait a few minutes.' } })
@@ -89,8 +92,34 @@ app.post('/api/auth/login', authLimiter, async (request, response) => {
   const email = String(request.body.email || '').trim().toLowerCase()
   const password = String(request.body.password || '')
   const user = (await readUsers()).find((entry) => entry.email === email)
-  if (!user || !(await bcrypt.compare(password, user.passwordHash))) return response.status(401).json({ error: 'Email or password is incorrect.' })
+  if (!user?.passwordHash || !(await bcrypt.compare(password, user.passwordHash))) return response.status(401).json({ error: 'Email or password is incorrect.' })
   setSession(response, user).json({ user: publicUser(user) })
+})
+
+app.get('/api/auth/config', (_request, response) => response.json({ googleClientId }))
+app.post('/api/auth/google', authLimiter, async (request, response) => {
+  if (!googleClient) return response.status(503).json({ error: 'Google Sign-In has not been configured yet.' })
+  const credential = String(request.body.credential || '')
+  if (!credential || credential.length > 10000) return response.status(400).json({ error: 'Google did not return a valid credential.' })
+  try {
+    const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: googleClientId })
+    const payload = ticket.getPayload()
+    if (!payload?.sub || !payload.email || payload.email_verified !== true) return response.status(401).json({ error: 'Google could not verify this email address.' })
+    const users = await readUsers()
+    let user = users.find((entry) => entry.googleSubject === payload.sub)
+    if (!user) {
+      if (users.some((entry) => entry.email === payload.email.toLowerCase())) return response.status(409).json({ error: 'This email already has a password account. Sign in with your password.' })
+      user = { id: `google:${payload.sub}`, googleSubject: payload.sub, provider: 'google', name: String(payload.name || payload.email.split('@')[0]).slice(0, 60), email: payload.email.toLowerCase(), createdAt: new Date().toISOString() }
+      users.push(user)
+    } else {
+      user.name = String(payload.name || user.name).slice(0, 60)
+      user.email = payload.email.toLowerCase()
+    }
+    await saveUsers(users)
+    setSession(response, user).json({ user: publicUser(user) })
+  } catch {
+    response.status(401).json({ error: 'Google Sign-In could not be verified. Please try again.' })
+  }
 })
 
 app.get('/api/auth/me', authenticate, (request, response) => response.json({ user: publicUser(request.user) }))
