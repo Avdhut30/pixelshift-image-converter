@@ -1,6 +1,6 @@
 # PixelShift Universal Image Converter
 
-A private, browser-based image workspace for HEIC/HEIF, JPG, PNG, WebP, GIF, BMP, AVIF, and SVG images. Convert formats, compress to 25–200 KB, or remove backgrounds and replace them with transparent, white, red, blue, green, black, or a custom color. It supports mixed batches, individual files, folder selection, and recursive folder drops.
+A private, browser-based image workspace for HEIC/HEIF, JPG, PNG, WebP, GIF, BMP, AVIF, and SVG images. Convert formats, batch-resize images, compress to 25–200 KB, or remove backgrounds and replace them with transparent, white, red, blue, green, black, or a custom color. It supports mixed batches, individual files, folder selection, recursive folder drops, and one-click ZIP downloads.
 
 ## Run locally
 
@@ -12,6 +12,8 @@ npm run dev
 The development command starts both the Vite app and the authentication API. Open the Vite URL shown in the terminal. Accounts are stored locally in `server/data/users.json`, which is excluded from Git.
 
 Conversion happens entirely in the browser using native image codecs first and `heic-to`/libheif as the HEIC fallback; selected images are never uploaded. Animated inputs are exported as a single frame.
+
+The resize tool supports maximum-bound resizing with the original aspect ratio, exact dimensions, optional upscaling prevention, and JPG, PNG, or WebP output. Tool preferences are saved locally in the browser for the next visit.
 
 Compression exports optimized WebP files. It searches for the highest quality that fits the selected size, then progressively reduces dimensions only when quality adjustment alone cannot reach the target.
 
