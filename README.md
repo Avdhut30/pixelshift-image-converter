@@ -11,6 +11,16 @@ npm run dev
 
 The development command starts both the Vite app and the authentication API. Open the Vite URL shown in the terminal. Accounts are stored locally in `server/data/users.json`, which is excluded from Git.
 
+## Google Sign-In
+
+Create an OAuth 2.0 client in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials) with application type **Web application**. Add your local URL (for example, `http://localhost:5173`) and production HTTPS URL as **Authorized JavaScript origins**, then set the same client ID in `.env`:
+
+```env
+GOOGLE_CLIENT_ID=1234567890-example.apps.googleusercontent.com
+```
+
+No Google client secret is required for this button flow. The browser sends Google's signed ID token to the PixelShift API, which verifies it with `google-auth-library` before creating the normal secure session cookie. Restart the development server after changing `.env`.
+
 Conversion happens entirely in the browser using native image codecs first and `heic-to`/libheif as the HEIC fallback; selected images are never uploaded. Animated inputs are exported as a single frame.
 
 The resize tool supports maximum-bound resizing with the original aspect ratio, exact dimensions, optional upscaling prevention, and JPG, PNG, or WebP output. Tool preferences are saved locally in the browser for the next visit.

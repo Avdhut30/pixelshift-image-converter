@@ -159,8 +159,49 @@ const authRequest = async (path, options = {}) => {
   if (!response.ok) throw new Error(data.error || 'Unable to complete this request.')
   return data
 }
+let googleIdentityPromise
+const loadGoogleIdentity = () => {
+  if (window.google?.accounts?.id) return Promise.resolve(window.google)
+  if (googleIdentityPromise) return googleIdentityPromise
+  googleIdentityPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-pixelshift-google]')
+    const script = existing || document.createElement('script')
+    const loaded = () => window.google?.accounts?.id ? resolve(window.google) : reject(new Error('Google Sign-In could not load.'))
+    script.addEventListener('load', loaded, { once: true }); script.addEventListener('error', () => reject(new Error('Google Sign-In could not load.')), { once: true })
+    if (!existing) { script.src = 'https://accounts.google.com/gsi/client'; script.async = true; script.defer = true; script.dataset.pixelshiftGoogle = 'true'; document.head.appendChild(script) }
+  })
+  return googleIdentityPromise
+}
 
-function AuthModal({ initialMode = 'login', onClose, onAuthenticated }) {
+function GoogleSignInButton({ clientId, onAuthenticated, onError }) {
+  const buttonRef = useRef(null), [busy, setBusy] = useState(false)
+  useEffect(() => {
+    if (!clientId || !buttonRef.current) return undefined
+    let cancelled = false
+    loadGoogleIdentity().then((google) => {
+      if (cancelled || !buttonRef.current) return
+      google.accounts.id.initialize({
+        client_id: clientId,
+        ux_mode: 'popup',
+        callback: async ({ credential }) => {
+          if (!credential) return onError('Google did not return a credential.')
+          setBusy(true); onError('')
+          try {
+            const data = await authRequest('google', { method: 'POST', body: JSON.stringify({ credential }) })
+            onAuthenticated(data.user)
+          } catch (error) { onError(error.message) }
+          finally { setBusy(false) }
+        },
+      })
+      buttonRef.current.replaceChildren()
+      google.accounts.id.renderButton(buttonRef.current, { type: 'standard', theme: 'outline', size: 'large', text: 'continue_with', shape: 'rectangular', logo_alignment: 'left', width: Math.min(360, buttonRef.current.clientWidth || 360) })
+    }).catch((error) => onError(error.message))
+    return () => { cancelled = true }
+  }, [clientId, onAuthenticated, onError])
+  return <div className={`google-sign-in ${busy ? 'busy' : ''}`} aria-busy={busy}><div ref={buttonRef} />{busy && <span><RefreshCw className="spin" size={16} /> Verifying Google account…</span>}</div>
+}
+
+function AuthModal({ initialMode = 'login', googleClientId, onClose, onAuthenticated }) {
   const [mode, setMode] = useState(initialMode), [error, setError] = useState(''), [submitting, setSubmitting] = useState(false)
   const isRegister = mode === 'register'
   const submit = async (event) => {
@@ -177,6 +218,7 @@ function AuthModal({ initialMode = 'login', onClose, onAuthenticated }) {
       <button className="auth-close" onClick={onClose} aria-label="Close"><X size={19} /></button>
       <div className="auth-logo"><Layers3 size={22} /></div>
       <div className="auth-heading"><span>PIXELSHIFT ACCOUNT</span><h2 id="auth-title">{isRegister ? 'Create your account' : 'Welcome back'}</h2><p>{isRegister ? 'Save your workspace behind a secure sign-in.' : 'Sign in to start converting your images.'}</p></div>
+      {googleClientId && <><GoogleSignInButton clientId={googleClientId} onAuthenticated={onAuthenticated} onError={setError} /><div className="auth-divider"><span>or continue with email</span></div></>}
       <div className="auth-tabs"><button className={!isRegister ? 'active' : ''} onClick={() => { setMode('login'); setError('') }}>Sign in</button><button className={isRegister ? 'active' : ''} onClick={() => { setMode('register'); setError('') }}>Create account</button></div>
       <form onSubmit={submit}>
         {isRegister && <label>Full name<div className="auth-input"><User size={17} /><input name="name" autoComplete="name" minLength="2" maxLength="60" placeholder="Your name" required /></div></label>}
@@ -185,7 +227,7 @@ function AuthModal({ initialMode = 'login', onClose, onAuthenticated }) {
         {error && <div className="auth-error"><AlertCircle size={15} /> {error}</div>}
         <button className="auth-submit" disabled={submitting}>{submitting ? <RefreshCw className="spin" size={18} /> : <ShieldCheck size={18} />}{submitting ? 'Please wait…' : isRegister ? 'Create account' : 'Sign in securely'}</button>
       </form>
-      <small><LockKeyhole size={13} /> Your password is encrypted and your session uses a secure JWT cookie.</small>
+      <small><LockKeyhole size={13} /> Google credentials are verified on the server and sessions use a secure JWT cookie.</small>
     </section>
   </div>
 }
@@ -199,11 +241,16 @@ function App() {
   const [resizeWidth, setResizeWidth] = useState(preferences.resizeWidth || 1920), [resizeHeight, setResizeHeight] = useState(preferences.resizeHeight || 1080)
   const [preserveAspect, setPreserveAspect] = useState(preferences.preserveAspect ?? true), [preventUpscale, setPreventUpscale] = useState(preferences.preventUpscale ?? true)
   const [parallelism, setParallelism] = useState(preferences.parallelism || 3), [dragging, setDragging] = useState(false), [zipping, setZipping] = useState(false)
-  const [user, setUser] = useState(null), [authOpen, setAuthOpen] = useState(false), [authLoading, setAuthLoading] = useState(true)
+  const [user, setUser] = useState(null), [googleClientId, setGoogleClientId] = useState(''), [authOpen, setAuthOpen] = useState(false), [authLoading, setAuthLoading] = useState(true)
   const inputRef = useRef(null), folderInputRef = useRef(null), filesRef = useRef([])
   useEffect(() => { filesRef.current = files }, [files])
   useEffect(() => () => filesRef.current.forEach((item) => item.url && URL.revokeObjectURL(item.url)), [])
-  useEffect(() => { authRequest('me').then(({ user: sessionUser }) => setUser(sessionUser)).catch(() => {}).finally(() => setAuthLoading(false)) }, [])
+  useEffect(() => {
+    Promise.allSettled([
+      authRequest('me').then(({ user: sessionUser }) => setUser(sessionUser)),
+      authRequest('config').then(({ googleClientId: configuredClientId }) => setGoogleClientId(configuredClientId || '')),
+    ]).finally(() => setAuthLoading(false))
+  }, [])
   useEffect(() => {
     try { localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ format, quality, tool, targetKB, background, customBackground, backgroundQuality, resizeWidth, resizeHeight, preserveAspect, preventUpscale, parallelism })) }
     catch { /* Preferences are optional when browser storage is unavailable. */ }
@@ -313,7 +360,7 @@ function App() {
       <section className="trust-row" id="privacy"><article><span><ShieldCheck size={21} /></span><div><strong>Your files stay yours</strong><p>Image processing happens locally and files never leave your device.</p></div></article><article><span><WandSparkles size={21} /></span><div><strong>AI-powered cutouts</strong><p>Remove backgrounds and replace them with transparent or solid color.</p></div></article><article><span><Zap size={21} /></span><div><strong>Built for batches</strong><p>Process mixed files and complete folders in one easy workflow.</p></div></article></section>
     </main>
     <footer><span>PixelShift</span><p>Universal image conversion, right in your browser.</p><small>Private · Fast · Secure</small></footer>
-    {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onAuthenticated={(authenticatedUser) => { setUser(authenticatedUser); setAuthOpen(false) }} />}
+    {authOpen && <AuthModal googleClientId={googleClientId} onClose={() => setAuthOpen(false)} onAuthenticated={(authenticatedUser) => { setUser(authenticatedUser); setAuthOpen(false) }} />}
   </div>
 }
 ReactDOM.createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>)
