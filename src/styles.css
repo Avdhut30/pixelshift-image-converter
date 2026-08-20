@@ -194,6 +194,7 @@ h1 em { display: block; color: var(--green); font-style: normal; }
 .ai-quality > label { display: flex; align-items: center; gap: 6px; }
 .ai-quality > label svg { color: var(--green); }
 .ai-quality > small { display: block; margin-top: 5px; color: #8a948d; font-size: 9px; }
+.studio-badge { margin-left: 2px; padding: 2px 5px; border-radius: 999px; color: #fff; background: linear-gradient(135deg, #197655, #34a56f); font-size: 7px; font-weight: 800; letter-spacing: .08em; }
 .color-options { min-height: 45px; display: flex; align-items: center; gap: 8px; }
 .color-options button, .custom-swatch { position: relative; width: 32px; height: 32px; display: grid; place-items: center; flex: 0 0 auto; border: 2px solid white; border-radius: 9px; box-shadow: 0 0 0 1px #d3dcd3; color: white; overflow: hidden; }
 .color-options button:hover, .custom-swatch:hover { transform: translateY(-1px); }

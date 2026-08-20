@@ -45,7 +45,7 @@ PixelShift brings the image tasks people use every day into one focused workspac
 | **Convert** | Converts mixed image batches with configurable quality | JPG, PNG, WebP |
 | **Resize** | Uses maximum bounds or exact dimensions, preserves aspect ratio, and can prevent upscaling | JPG, PNG, WebP |
 | **Compress** | Searches for the best WebP quality and progressively reduces dimensions to reach 25–200 KB | Optimized WebP |
-| **Remove background** | Runs ISNet locally with Fast, HD, and Ultra quality options; supports transparent and solid-color replacements | PNG or JPG |
+| **Remove background** | Runs BEN2 Studio AI or ISNet locally, with automatic fallback plus transparent and solid-color replacements | PNG or JPG |
 
 Additional workflow features include:
 
@@ -55,7 +55,8 @@ Additional workflow features include:
 - Direct folder output through the File System Access API in supported browsers
 - Locally saved tool preferences
 - Native browser codecs with a libheif fallback for HEIC/HEIF files
-- WebGPU acceleration for background removal when available
+- **Studio AI** background removal with a 1024×1024 BEN2 model for finer subject edges
+- WebGPU acceleration and automatic Ultra fallback on unsupported devices
 
 ## Supported formats
 
@@ -82,7 +83,7 @@ flowchart LR
     Auth --> Neon[(Neon Postgres)]
 ```
 
-Image bytes are handled by browser APIs and the background-removal model. The application server handles authentication requests, not the selected image files. AI model assets are streamed through the Vercel Function and cached by the browser.
+Image bytes are handled by browser APIs and on-device background-removal models. The application server handles authentication requests, not the selected image files. The pinned BEN2 Studio model is downloaded directly from Hugging Face and cached by the browser; ISNet fallback assets are streamed through the Vercel Function.
 
 ## Authentication
 
@@ -101,7 +102,7 @@ Local development uses `server/data/users.json` when `DATABASE_URL` is not confi
 | --- | --- |
 | Frontend | React 18, Vite 6, Lucide React |
 | Image conversion | Canvas API, native browser codecs, `heic-to` |
-| Background removal | `@imgly/background-removal`, ONNX Runtime Web |
+| Background removal | BEN2, `@imgly/background-removal`, ONNX Runtime Web, WebGPU |
 | ZIP export | JSZip |
 | API | Express 5 on a Vercel Function |
 | Authentication | Google Identity Services, bcrypt, JWT |
@@ -218,8 +219,8 @@ pixelshift-image-converter/
 
 - Chrome and Edge provide the fullest folder workflow, including direct folder output.
 - Other modern browsers support file selection, conversion, and regular downloads.
-- WebGPU is used for AI acceleration when available; ONNX Runtime Web provides the fallback.
-- The first background-removal run downloads a model of approximately 44–176 MB depending on the chosen quality. It is cached for later use.
+- Studio AI uses WebGPU through ONNX Runtime Web. If WebGPU or BEN2 is unavailable, PixelShift automatically switches to the Ultra ISNet engine.
+- The first background-removal run downloads a model of approximately 44–209 MB depending on the chosen quality. It is cached for later use.
 
 ## Security notes
 
@@ -245,7 +246,7 @@ For bugs, include the browser, operating system, input format, and steps needed 
 
 This repository does not currently include a project-wide license. Add an appropriate license before inviting redistribution or reuse.
 
-Background removal is powered by `@imgly/background-removal`, which is distributed under the AGPL. Review its license and the licenses of all dependencies before commercial distribution.
+Studio AI uses the MIT-licensed [BEN2 ONNX model](https://huggingface.co/onnx-community/BEN2-ONNX). The fallback is powered by `@imgly/background-removal`, which is distributed under the AGPL. Review its license and the licenses of all dependencies before commercial distribution.
 
 ---
 

@@ -16,10 +16,15 @@ const BACKGROUNDS = [
   { value: '#16a34a', label: 'Green' }, { value: '#111827', label: 'Black' },
 ]
 const BACKGROUND_MODELS = {
+  studio: { label: 'Studio AI', size: '209 MB' },
   fast: { model: 'isnet_quint8', label: 'Fast', size: '44 MB' },
   hd: { model: 'isnet_fp16', label: 'HD', size: '88 MB' },
   ultra: { model: 'isnet', label: 'Ultra', size: '176 MB' },
 }
+const STUDIO_MODEL_URL = 'https://huggingface.co/onnx-community/BEN2-ONNX/resolve/c552aa82688edce09f0ac9d2e31ad53d9d629010/onnx/model_fp16.onnx'
+const STUDIO_MODEL_SIZE = 219121675
+const STUDIO_INPUT_SIZE = 1024
+let studioSessionPromise
 const EXTENSIONS = ['heic', 'heif', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'avif', 'svg']
 const ACCEPT = `${EXTENSIONS.map((ext) => `.${ext}`).join(',')},image/*`
 const PREFERENCES_KEY = 'pixelshift-preferences-v1'
@@ -120,15 +125,79 @@ const resizeImage = async (file, requestedWidth, requestedHeight, preserveAspect
     return { blob, width, height }
   } finally { bitmap.close() }
 }
-const removeImageBackground = async (file, background, qualityMode, onProgress) => {
-  let source = file
-  if (/\.(heic|heif)$/i.test(file.name) || /heic|heif/i.test(file.type)) source = await heicTo({ blob: file, type: 'image/png', quality: 1 })
+const downloadStudioModel = async (onProgress) => {
+  const cache = 'caches' in window ? await caches.open('pixelshift-ai-v1') : null
+  const cached = cache ? await cache.match(STUDIO_MODEL_URL) : null
+  if (cached) { onProgress?.('Loading cached Studio AI'); return cached.arrayBuffer() }
+  const response = await fetch(STUDIO_MODEL_URL)
+  if (!response.ok) throw new Error(`Studio AI download failed (${response.status})`)
+  const cacheCopy = response.clone()
+  if (!response.body) return response.arrayBuffer()
+  const reader = response.body.getReader(), chunks = []
+  let received = 0
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value); received += value.byteLength
+    onProgress?.(`Downloading Studio AI · ${Math.min(100, Math.round((received / STUDIO_MODEL_SIZE) * 100))}%`)
+  }
+  cache?.put(STUDIO_MODEL_URL, cacheCopy).catch(() => {})
+  return new Blob(chunks).arrayBuffer()
+}
+const getStudioSession = async (onProgress) => {
+  if (!navigator.gpu) throw new Error('Studio AI needs a browser with WebGPU support')
+  if (!studioSessionPromise) {
+    studioSessionPromise = (async () => {
+      onProgress?.('Starting Studio AI engine')
+      const [ort, model] = await Promise.all([import('onnxruntime-web/webgpu'), downloadStudioModel(onProgress)])
+      onProgress?.('Optimizing Studio AI')
+      const session = await ort.InferenceSession.create(model, { executionProviders: ['webgpu'], graphOptimizationLevel: 'all' })
+      return { ort, session }
+    })().catch((error) => { studioSessionPromise = undefined; throw error })
+  } else onProgress?.('Loading cached Studio AI')
+  return studioSessionPromise
+}
+const studioRemoveBackground = async (source, onProgress) => {
+  const bitmap = await createImageBitmap(source, { imageOrientation: 'from-image' })
+  try {
+    const inputCanvas = document.createElement('canvas'); inputCanvas.width = STUDIO_INPUT_SIZE; inputCanvas.height = STUDIO_INPUT_SIZE
+    const inputContext = inputCanvas.getContext('2d', { willReadFrequently: true })
+    inputContext.drawImage(bitmap, 0, 0, STUDIO_INPUT_SIZE, STUDIO_INPUT_SIZE)
+    const pixels = inputContext.getImageData(0, 0, STUDIO_INPUT_SIZE, STUDIO_INPUT_SIZE).data
+    const area = STUDIO_INPUT_SIZE * STUDIO_INPUT_SIZE, input = new Float32Array(area * 3)
+    const means = [0.485, 0.456, 0.406], deviations = [0.229, 0.224, 0.225]
+    onProgress?.('Preparing image · 20%')
+    for (let index = 0; index < area; index += 1) {
+      const pixel = index * 4
+      input[index] = (pixels[pixel] / 255 - means[0]) / deviations[0]
+      input[area + index] = (pixels[pixel + 1] / 255 - means[1]) / deviations[1]
+      input[area * 2 + index] = (pixels[pixel + 2] / 255 - means[2]) / deviations[2]
+    }
+    const { ort, session } = await getStudioSession(onProgress)
+    onProgress?.('Detecting subject · 55%')
+    const output = await session.run({ [session.inputNames[0]]: new ort.Tensor('float32', input, [1, 3, STUDIO_INPUT_SIZE, STUDIO_INPUT_SIZE]) })
+    const alpha = output[session.outputNames[0]].data
+    onProgress?.('Refining edges · 90%')
+    const maskCanvas = document.createElement('canvas'); maskCanvas.width = STUDIO_INPUT_SIZE; maskCanvas.height = STUDIO_INPUT_SIZE
+    const maskContext = maskCanvas.getContext('2d'), mask = maskContext.createImageData(STUDIO_INPUT_SIZE, STUDIO_INPUT_SIZE)
+    for (let index = 0; index < area; index += 1) {
+      const value = Math.max(0, Math.min(255, Math.round(alpha[index] * 255))), pixel = index * 4
+      mask.data[pixel] = value; mask.data[pixel + 1] = value; mask.data[pixel + 2] = value; mask.data[pixel + 3] = 255
+    }
+    maskContext.putImageData(mask, 0, 0)
+    const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height
+    const context = canvas.getContext('2d'); context.drawImage(bitmap, 0, 0)
+    context.globalCompositeOperation = 'destination-in'; context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high'
+    context.drawImage(maskCanvas, 0, 0, canvas.width, canvas.height)
+    return await new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Studio AI export failed')), 'image/png'))
+  } finally { bitmap.close() }
+}
+const imglyRemoveBackground = async (source, qualityMode, onProgress) => {
   const { removeBackground } = await import('@imgly/background-removal')
   const quality = BACKGROUND_MODELS[qualityMode] || BACKGROUND_MODELS.ultra
-  const transparent = await removeBackground(source, {
+  const config = {
     publicPath: `${window.location.origin}/ai-assets/`,
     model: quality.model,
-    device: 'gpu',
     proxyToWorker: false,
     output: { format: 'image/png', quality: 1, type: 'foreground' },
     progress: (key, current, total) => {
@@ -137,14 +206,40 @@ const removeImageBackground = async (file, background, qualityMode, onProgress) 
       const stage = key.startsWith('compute:') ? 'Refining edges' : key.includes('/models/') ? `Downloading ${quality.label} AI` : 'Loading AI engine'
       onProgress?.(`${stage} · ${percent}%`)
     },
-  })
-  if (background === 'transparent') return { blob: transparent, extension: 'png', label: `${quality.label} transparent PNG` }
+  }
+  let blob
+  try { blob = await removeBackground(source, { ...config, device: navigator.gpu ? 'gpu' : 'cpu' }) }
+  catch (error) {
+    if (!navigator.gpu) throw error
+    console.warn(`${quality.label} GPU processing failed; retrying on CPU.`, error)
+    onProgress?.(`${quality.label} GPU unavailable · retrying safely`)
+    blob = await removeBackground(source, { ...config, device: 'cpu' })
+  }
+  return { blob, label: quality.label }
+}
+const removeImageBackground = async (file, background, qualityMode, onProgress) => {
+  let source = file
+  if (/\.(heic|heif)$/i.test(file.name) || /heic|heif/i.test(file.type)) source = await heicTo({ blob: file, type: 'image/png', quality: 1 })
+  let transparent, label
+  if (qualityMode === 'studio') {
+    try { transparent = await studioRemoveBackground(source, onProgress); label = 'Studio AI' }
+    catch (error) {
+      console.warn('Studio AI unavailable; falling back to Ultra.', error)
+      onProgress?.('Studio unavailable · switching to Ultra')
+      const fallback = await imglyRemoveBackground(source, 'ultra', onProgress)
+      transparent = fallback.blob; label = 'Studio fallback · Ultra'
+    }
+  } else {
+    const result = await imglyRemoveBackground(source, qualityMode, onProgress)
+    transparent = result.blob; label = result.label
+  }
+  if (background === 'transparent') return { blob: transparent, extension: 'png', label: `${label} transparent PNG` }
   const bitmap = await createImageBitmap(transparent)
   try {
     const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height
     const context = canvas.getContext('2d'); context.fillStyle = background; context.fillRect(0, 0, canvas.width, canvas.height); context.drawImage(bitmap, 0, 0)
     const blob = await new Promise((resolve, reject) => canvas.toBlob((result) => result ? resolve(result) : reject(new Error('Background export failed')), 'image/jpeg', 0.94))
-    return { blob, extension: 'jpg', label: `${quality.label} ${background.toUpperCase()} background` }
+    return { blob, extension: 'jpg', label: `${label} ${background.toUpperCase()} background` }
   } finally { bitmap.close() }
 }
 const friendlyError = (error) => /memory|wasm|libheif/i.test(String(error)) ? 'The decoder ran out of memory. Try this file by itself.' : 'This file may be damaged or use a codec your browser cannot decode.'
@@ -239,7 +334,7 @@ function App() {
   const [files, setFiles] = useState([]), [format, setFormat] = useState(preferences.format || 'jpeg'), [quality, setQuality] = useState(preferences.quality || 90)
   const [tool, setTool] = useState(preferences.tool || 'convert'), [targetKB, setTargetKB] = useState(preferences.targetKB || 50)
   const [background, setBackground] = useState(preferences.background || 'transparent'), [customBackground, setCustomBackground] = useState(preferences.customBackground || '#f4b942')
-  const [backgroundQuality, setBackgroundQuality] = useState(preferences.backgroundQuality || 'ultra')
+  const [backgroundQuality, setBackgroundQuality] = useState(preferences.backgroundQuality || 'studio')
   const [resizeWidth, setResizeWidth] = useState(preferences.resizeWidth || 1920), [resizeHeight, setResizeHeight] = useState(preferences.resizeHeight || 1080)
   const [preserveAspect, setPreserveAspect] = useState(preferences.preserveAspect ?? true), [preventUpscale, setPreventUpscale] = useState(preferences.preventUpscale ?? true)
   const [parallelism, setParallelism] = useState(preferences.parallelism || 3), [dragging, setDragging] = useState(false), [zipping, setZipping] = useState(false)
@@ -357,7 +452,7 @@ function App() {
           {tool === 'convert' ? <><div className="control-block"><label htmlFor="format"><span className="step-number small">2</span> Convert to</label><div className="select-wrap"><select id="format" value={format} onChange={(event) => setFormat(event.target.value)}>{Object.entries(FORMATS).map(([value, option]) => <option key={value} value={value}>{option.name} — {option.note}</option>)}</select><ChevronDown size={16} /></div></div><div className={`control-block quality ${format === 'png' ? 'disabled' : ''}`}><div className="label-row"><label htmlFor="quality">Quality</label><output>{quality}%</output></div><input id="quality" type="range" min="50" max="100" value={quality} disabled={format === 'png'} onChange={(event) => setQuality(Number(event.target.value))} /><div className="range-labels"><span>Smaller file</span><span>Best quality</span></div></div></>
             : tool === 'compress' ? <><div className="control-block"><label htmlFor="target-size"><span className="step-number small">2</span> Maximum file size</label><div className="select-wrap"><select id="target-size" value={targetKB} onChange={(event) => setTargetKB(Number(event.target.value))}><option value="25">25 KB — Extra small</option><option value="50">50 KB — Recommended</option><option value="100">100 KB — Better detail</option><option value="200">200 KB — High detail</option></select><ChevronDown size={16} /></div></div><div className="compression-summary"><Minimize2 size={19} /><div><strong>Smart WebP compression</strong><span>Quality is reduced first, dimensions only if needed.</span></div></div></>
               : tool === 'resize' ? <><div className="control-block"><label><span className="step-number small">2</span> {preserveAspect ? 'Maximum dimensions' : 'Exact dimensions'}</label><div className="dimension-fields"><label>W <input aria-label="Resize width" type="number" min="1" max="8192" value={resizeWidth} onChange={(event) => setResizeWidth(Math.min(8192, Math.max(1, Number(event.target.value))))} /></label><span>×</span><label>H <input aria-label="Resize height" type="number" min="1" max="8192" value={resizeHeight} onChange={(event) => setResizeHeight(Math.min(8192, Math.max(1, Number(event.target.value))))} /></label><small>px</small></div></div><div className="control-block"><label htmlFor="resize-format">Output format</label><div className="select-wrap"><select id="resize-format" value={format} onChange={(event) => setFormat(event.target.value)}>{Object.entries(FORMATS).map(([value, option]) => <option key={value} value={value}>{option.name}</option>)}</select><ChevronDown size={16} /></div></div><div className="control-block resize-options"><label>Resize behavior</label><label className="check-option"><input type="checkbox" checked={preserveAspect} onChange={(event) => setPreserveAspect(event.target.checked)} /><span><Check size={12} /></span> Preserve aspect ratio</label><label className="check-option"><input type="checkbox" checked={preventUpscale} onChange={(event) => setPreventUpscale(event.target.checked)} /><span><Check size={12} /></span> Never enlarge images</label></div></>
-                : <><div className="control-block background-control"><label><span className="step-number small">2</span> New background</label><div className="color-options">{BACKGROUNDS.map((color) => <button key={color.value} className={`${color.value === 'transparent' ? 'transparent-swatch' : ''} ${background === color.value ? 'selected' : ''}`} style={color.value.startsWith('#') ? { backgroundColor: color.value } : undefined} onClick={() => setBackground(color.value)} title={color.label} aria-label={`${color.label} background`}>{background === color.value && <Check size={13} />}</button>)}<label className={`custom-swatch ${background === 'custom' ? 'selected' : ''}`} title="Custom color"><input type="color" value={customBackground} onChange={(event) => { setCustomBackground(event.target.value); setBackground('custom') }} /><span style={{ backgroundColor: customBackground }} />{background === 'custom' && <Check size={13} />}</label></div></div><div className="control-block ai-quality"><label htmlFor="ai-quality"><Eraser size={14} /> AI quality</label><div className="select-wrap"><select id="ai-quality" value={backgroundQuality} onChange={(event) => setBackgroundQuality(event.target.value)}><option value="ultra">Ultra — Full model · 176 MB</option><option value="hd">HD — Detailed · 88 MB</option><option value="fast">Fast — Lightweight · 44 MB</option></select><ChevronDown size={16} /></div><small>Downloaded once, then cached by Edge.</small></div></>}
+                : <><div className="control-block background-control"><label><span className="step-number small">2</span> New background</label><div className="color-options">{BACKGROUNDS.map((color) => <button key={color.value} className={`${color.value === 'transparent' ? 'transparent-swatch' : ''} ${background === color.value ? 'selected' : ''}`} style={color.value.startsWith('#') ? { backgroundColor: color.value } : undefined} onClick={() => setBackground(color.value)} title={color.label} aria-label={`${color.label} background`}>{background === color.value && <Check size={13} />}</button>)}<label className={`custom-swatch ${background === 'custom' ? 'selected' : ''}`} title="Custom color"><input type="color" value={customBackground} onChange={(event) => { setCustomBackground(event.target.value); setBackground('custom') }} /><span style={{ backgroundColor: customBackground }} />{background === 'custom' && <Check size={13} />}</label></div></div><div className="control-block ai-quality"><label htmlFor="ai-quality"><WandSparkles size={14} /> AI quality <span className="studio-badge">NEW</span></label><div className="select-wrap"><select id="ai-quality" value={backgroundQuality} onChange={(event) => setBackgroundQuality(event.target.value)}><option value="studio">Studio AI — Best edges · 209 MB</option><option value="ultra">Ultra — Full model · 176 MB</option><option value="hd">HD — Detailed · 88 MB</option><option value="fast">Fast — Lightweight · 44 MB</option></select><ChevronDown size={16} /></div><small>{backgroundQuality === 'studio' ? 'BEN2 runs privately with WebGPU; Ultra takes over automatically if needed.' : 'Downloaded once, then cached by your browser.'}</small></div></>}
           <div className="action-buttons">{'showDirectoryPicker' in window && <button className="folder-save-button" disabled={!files.length || converting} onClick={() => convertAll(true)}><FolderDown size={18} /> Save folder</button>}<button className="convert-button" disabled={!files.length || converting} onClick={() => convertAll(false)}>{converting ? `${processed}/${files.length}` : failed ? `Retry ${failed}` : completed === files.length && completed ? `${tool === 'background' ? 'Remove again' : tool === 'compress' ? 'Compress again' : tool === 'resize' ? 'Resize again' : 'Convert again'}` : tool === 'background' ? 'Remove background' : tool === 'compress' ? `Compress to ${targetKB} KB` : tool === 'resize' ? 'Resize images' : `Convert to ${FORMATS[format].label}`}{converting ? <RefreshCw size={18} className="spin" /> : tool === 'background' ? <Eraser size={18} /> : tool === 'compress' ? <Minimize2 size={18} /> : tool === 'resize' ? <Maximize2 size={18} /> : <ArrowRight size={18} />}</button></div>
         </div>
       </section>
