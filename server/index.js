@@ -9,6 +9,7 @@ import { OAuth2Client } from 'google-auth-library'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -17,6 +18,7 @@ const usersFile = join(dataDirectory, 'users.json')
 const port = Number(process.env.PORT || 8787)
 const host = process.env.HOST || '127.0.0.1'
 const isProduction = process.env.NODE_ENV === 'production'
+const isVercel = Boolean(process.env.VERCEL)
 const jwtSecret = process.env.JWT_SECRET || 'pixelshift-local-development-secret-change-me'
 const googleClientId = String(process.env.GOOGLE_CLIENT_ID || '').trim()
 const googleClient = googleClientId ? new OAuth2Client(googleClientId) : null
@@ -26,8 +28,10 @@ if (isProduction && !process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET must be set in production')
 }
 
-await mkdir(dataDirectory, { recursive: true })
-if (!existsSync(usersFile)) await writeFile(usersFile, '[]\n', 'utf8')
+if (!isVercel) {
+  await mkdir(dataDirectory, { recursive: true })
+  if (!existsSync(usersFile)) await writeFile(usersFile, '[]\n', 'utf8')
+}
 
 const readUsers = async () => JSON.parse(await readFile(usersFile, 'utf8'))
 const saveUsers = async (users) => {
@@ -36,16 +40,15 @@ const saveUsers = async (users) => {
   await rename(temporaryFile, usersFile)
 }
 const publicUser = ({ id, name, email }) => ({ id, name, email })
-const createToken = (user) => jwt.sign({ sub: user.id, email: user.email }, jwtSecret, { expiresIn: '7d', issuer: 'pixelshift' })
+const createToken = (user) => jwt.sign({ sub: user.id, name: user.name, email: user.email, provider: user.provider || 'password' }, jwtSecret, { expiresIn: '7d', issuer: 'pixelshift' })
 const setSession = (response, user) => response.cookie('pixelshift_session', createToken(user), {
   httpOnly: true, secure: isProduction, sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000, path: '/',
 })
-const authenticate = async (request, response, next) => {
+const authenticate = (request, response, next) => {
   try {
     const payload = jwt.verify(request.cookies.pixelshift_session, jwtSecret, { issuer: 'pixelshift' })
-    const user = (await readUsers()).find((entry) => entry.id === payload.sub)
-    if (!user) throw new Error('User not found')
-    request.user = user
+    if (!payload.sub || !payload.email || !payload.name) throw new Error('Invalid session')
+    request.user = { id: payload.sub, name: payload.name, email: payload.email }
     next()
   } catch { response.status(401).json({ error: 'Your session has expired. Please sign in again.' }) }
 }
@@ -66,7 +69,8 @@ app.use('/ai-assets', async (request, response, next) => {
     response.set('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream')
     response.set('Cache-Control', 'public, max-age=31536000, immutable')
     response.set('Cross-Origin-Resource-Policy', 'same-origin')
-    response.send(Buffer.from(await upstream.arrayBuffer()))
+    if (!upstream.body) return response.status(502).end()
+    Readable.fromWeb(upstream.body).on('error', next).pipe(response)
   } catch (error) {
     if (error.name === 'TimeoutError') return response.status(504).json({ error: 'AI model download timed out.' })
     next(error)
@@ -74,6 +78,7 @@ app.use('/ai-assets', async (request, response, next) => {
 })
 
 app.post('/api/auth/register', authLimiter, async (request, response) => {
+  if (isVercel) return response.status(503).json({ error: 'Email accounts need a database on Vercel. Continue with Google instead.' })
   const name = String(request.body.name || '').trim().replace(/\s+/g, ' ')
   const email = String(request.body.email || '').trim().toLowerCase()
   const password = String(request.body.password || '')
@@ -89,6 +94,7 @@ app.post('/api/auth/register', authLimiter, async (request, response) => {
 })
 
 app.post('/api/auth/login', authLimiter, async (request, response) => {
+  if (isVercel) return response.status(503).json({ error: 'Email accounts need a database on Vercel. Continue with Google instead.' })
   const email = String(request.body.email || '').trim().toLowerCase()
   const password = String(request.body.password || '')
   const user = (await readUsers()).find((entry) => entry.email === email)
@@ -96,7 +102,7 @@ app.post('/api/auth/login', authLimiter, async (request, response) => {
   setSession(response, user).json({ user: publicUser(user) })
 })
 
-app.get('/api/auth/config', (_request, response) => response.json({ googleClientId }))
+app.get('/api/auth/config', (_request, response) => response.json({ googleClientId, passwordAuthEnabled: !isVercel }))
 app.post('/api/auth/google', authLimiter, async (request, response) => {
   if (!googleClient) return response.status(503).json({ error: 'Google Sign-In has not been configured yet.' })
   const credential = String(request.body.credential || '')
@@ -105,17 +111,15 @@ app.post('/api/auth/google', authLimiter, async (request, response) => {
     const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: googleClientId })
     const payload = ticket.getPayload()
     if (!payload?.sub || !payload.email || payload.email_verified !== true) return response.status(401).json({ error: 'Google could not verify this email address.' })
-    const users = await readUsers()
-    let user = users.find((entry) => entry.googleSubject === payload.sub)
-    if (!user) {
-      if (users.some((entry) => entry.email === payload.email.toLowerCase())) return response.status(409).json({ error: 'This email already has a password account. Sign in with your password.' })
-      user = { id: `google:${payload.sub}`, googleSubject: payload.sub, provider: 'google', name: String(payload.name || payload.email.split('@')[0]).slice(0, 60), email: payload.email.toLowerCase(), createdAt: new Date().toISOString() }
-      users.push(user)
-    } else {
-      user.name = String(payload.name || user.name).slice(0, 60)
-      user.email = payload.email.toLowerCase()
+    let user = { id: `google:${payload.sub}`, googleSubject: payload.sub, provider: 'google', name: String(payload.name || payload.email.split('@')[0]).slice(0, 60), email: payload.email.toLowerCase() }
+    if (!isVercel) {
+      const users = await readUsers()
+      const existing = users.find((entry) => entry.googleSubject === payload.sub)
+      if (!existing && users.some((entry) => entry.email === user.email)) return response.status(409).json({ error: 'This email already has a password account. Sign in with your password.' })
+      if (existing) { existing.name = user.name; existing.email = user.email; user = existing }
+      else users.push({ ...user, createdAt: new Date().toISOString() })
+      await saveUsers(users)
     }
-    await saveUsers(users)
     setSession(response, user).json({ user: publicUser(user) })
   } catch {
     response.status(401).json({ error: 'Google Sign-In could not be verified. Please try again.' })
@@ -130,4 +134,6 @@ app.use(express.static(join(root, 'dist')))
 app.use((request, response, next) => request.method === 'GET' && !request.path.startsWith('/api/')
   ? response.sendFile(join(root, 'dist', 'index.html')) : next())
 app.use((error, _request, response, _next) => { console.error(error); response.status(500).json({ error: 'Something went wrong. Please try again.' }) })
-app.listen(port, host, () => console.log(`PixelShift server running at http://${host}:${port}`))
+if (!isVercel) app.listen(port, host, () => console.log(`PixelShift server running at http://${host}:${port}`))
+
+export default app

@@ -41,3 +41,18 @@ npm start
 ```
 
 The JSON user store is suitable for a local or single-instance deployment. For a horizontally scaled production deployment, replace it with a shared database while keeping the API contract unchanged.
+
+## Deploy to Vercel
+
+The repository includes `vercel.json` and a Vercel Function that serves the authentication API and streams the background-removal model assets. Connect the repository at [vercel.com/new](https://vercel.com/new); Vercel will detect the Vite build settings automatically.
+
+Add these environment variables in **Project Settings → Environment Variables**, then redeploy:
+
+```env
+JWT_SECRET=a-long-random-secret
+GOOGLE_CLIENT_ID=1234567890-example.apps.googleusercontent.com
+```
+
+In the Google Cloud OAuth client, add both `http://localhost:5173` and the production Vercel HTTPS domain as **Authorized JavaScript origins**. A Google client secret is not needed.
+
+Vercel Functions do not provide a persistent writable filesystem, so the Vercel deployment uses stateless Google authentication and hides local email/password accounts. Local development continues to support both sign-in methods through `server/data/users.json`.

@@ -215,6 +215,7 @@ footer p { flex: 1; }
 .auth-input input { width: 100%; border: 0; outline: 0; color: #253129; background: transparent; font-size: 13px; }
 .auth-input input::placeholder { color: #a1aaa3; }
 .auth-error { display: flex; align-items: center; gap: 7px; padding: 9px 10px; border-radius: 8px; color: #963f37; background: #fff0ed; font-size: 11px; }
+.auth-modal > .auth-error { margin: 12px 0; }
 .auth-submit { height: 45px; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 3px; border: 0; border-radius: 10px; color: white; background: var(--green); font-weight: 700; }
 .auth-submit:hover:not(:disabled) { background: var(--green-dark); }
 .auth-submit:disabled { opacity: .6; cursor: wait; }
