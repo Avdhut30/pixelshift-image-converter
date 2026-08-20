@@ -51,8 +51,11 @@ Add these environment variables in **Project Settings → Environment Variables*
 ```env
 JWT_SECRET=a-long-random-secret
 GOOGLE_CLIENT_ID=1234567890-example.apps.googleusercontent.com
+DATABASE_URL=postgresql://user:password@host/database?sslmode=require
 ```
+
+The simplest setup is to connect [Neon Postgres from the Vercel Marketplace](https://vercel.com/marketplace/neon) to the PixelShift project. Confirm that the integration creates `DATABASE_URL` for Production (and Preview when desired).
 
 In the Google Cloud OAuth client, add both `http://localhost:5173` and the production Vercel HTTPS domain as **Authorized JavaScript origins**. A Google client secret is not needed.
 
-Vercel Functions do not provide a persistent writable filesystem, so the Vercel deployment uses stateless Google authentication and hides local email/password accounts. Local development continues to support both sign-in methods through `server/data/users.json`.
+Vercel Functions do not provide a persistent writable filesystem, so production email/password accounts use Postgres through `DATABASE_URL`. The required `pixelshift_users` table is created automatically on the first registration request. Google authentication remains stateless and local development falls back to `server/data/users.json` when no database URL is configured.
