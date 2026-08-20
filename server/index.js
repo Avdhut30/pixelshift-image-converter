@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { OAuth2Client } from 'google-auth-library'
+import { neon } from '@neondatabase/serverless'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -22,6 +23,8 @@ const isVercel = Boolean(process.env.VERCEL)
 const jwtSecret = process.env.JWT_SECRET || 'pixelshift-local-development-secret-change-me'
 const googleClientId = String(process.env.GOOGLE_CLIENT_ID || '').trim()
 const googleClient = googleClientId ? new OAuth2Client(googleClientId) : null
+const databaseUrl = String(process.env.DATABASE_URL || '').trim()
+const sql = databaseUrl ? neon(databaseUrl) : null
 const aiAssetBase = 'https://staticimgly.com/@imgly/background-removal-data/1.7.0/dist/'
 
 if (isProduction && !process.env.JWT_SECRET) {
@@ -39,6 +42,21 @@ const saveUsers = async (users) => {
   await writeFile(temporaryFile, `${JSON.stringify(users, null, 2)}\n`, 'utf8')
   await rename(temporaryFile, usersFile)
 }
+let databaseSetup
+const ensureDatabase = async () => {
+  if (!sql) throw new Error('DATABASE_URL is not configured')
+  databaseSetup ||= sql`
+      CREATE TABLE IF NOT EXISTS pixelshift_users (
+        id UUID PRIMARY KEY,
+        name VARCHAR(60) NOT NULL,
+        email VARCHAR(120) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `.catch((error) => { databaseSetup = null; throw error })
+  await databaseSetup
+}
+const databaseUser = (row) => ({ id: row.id, name: row.name, email: row.email, passwordHash: row.password_hash, provider: 'password' })
 const publicUser = ({ id, name, email }) => ({ id, name, email })
 const createToken = (user) => jwt.sign({ sub: user.id, name: user.name, email: user.email, provider: user.provider || 'password' }, jwtSecret, { expiresIn: '7d', issuer: 'pixelshift' })
 const setSession = (response, user) => response.cookie('pixelshift_session', createToken(user), {
@@ -78,31 +96,56 @@ app.use('/ai-assets', async (request, response, next) => {
 })
 
 app.post('/api/auth/register', authLimiter, async (request, response) => {
-  if (isVercel) return response.status(503).json({ error: 'Email accounts need a database on Vercel. Continue with Google instead.' })
   const name = String(request.body.name || '').trim().replace(/\s+/g, ' ')
   const email = String(request.body.email || '').trim().toLowerCase()
   const password = String(request.body.password || '')
   if (name.length < 2 || name.length > 60) return response.status(400).json({ error: 'Enter your full name.' })
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 120) return response.status(400).json({ error: 'Enter a valid email address.' })
   if (password.length < 8 || password.length > 72) return response.status(400).json({ error: 'Password must be between 8 and 72 characters.' })
+  if (sql) {
+    try {
+      await ensureDatabase()
+      const existing = await sql`SELECT id FROM pixelshift_users WHERE email = ${email} LIMIT 1`
+      if (existing.length) return response.status(409).json({ error: 'An account with this email already exists.' })
+      const passwordHash = await bcrypt.hash(password, 12)
+      const rows = await sql`
+        INSERT INTO pixelshift_users (id, name, email, password_hash)
+        VALUES (${crypto.randomUUID()}, ${name}, ${email}, ${passwordHash})
+        RETURNING id, name, email, password_hash
+      `
+      const user = databaseUser(rows[0])
+      return setSession(response, user).status(201).json({ user: publicUser(user) })
+    } catch (error) {
+      if (error.code === '23505') return response.status(409).json({ error: 'An account with this email already exists.' })
+      throw error
+    }
+  }
+  if (isVercel) return response.status(503).json({ error: 'Email sign-in is waiting for the production database connection.' })
   const users = await readUsers()
   if (users.some((user) => user.email === email)) return response.status(409).json({ error: 'An account with this email already exists.' })
   const user = { id: crypto.randomUUID(), name, email, passwordHash: await bcrypt.hash(password, 12), createdAt: new Date().toISOString() }
   users.push(user)
   await saveUsers(users)
-  setSession(response, user).status(201).json({ user: publicUser(user) })
+  return setSession(response, user).status(201).json({ user: publicUser(user) })
 })
 
 app.post('/api/auth/login', authLimiter, async (request, response) => {
-  if (isVercel) return response.status(503).json({ error: 'Email accounts need a database on Vercel. Continue with Google instead.' })
   const email = String(request.body.email || '').trim().toLowerCase()
   const password = String(request.body.password || '')
+  if (sql) {
+    await ensureDatabase()
+    const rows = await sql`SELECT id, name, email, password_hash FROM pixelshift_users WHERE email = ${email} LIMIT 1`
+    const user = rows[0] ? databaseUser(rows[0]) : null
+    if (!user?.passwordHash || !(await bcrypt.compare(password, user.passwordHash))) return response.status(401).json({ error: 'Email or password is incorrect.' })
+    return setSession(response, user).json({ user: publicUser(user) })
+  }
+  if (isVercel) return response.status(503).json({ error: 'Email sign-in is waiting for the production database connection.' })
   const user = (await readUsers()).find((entry) => entry.email === email)
   if (!user?.passwordHash || !(await bcrypt.compare(password, user.passwordHash))) return response.status(401).json({ error: 'Email or password is incorrect.' })
-  setSession(response, user).json({ user: publicUser(user) })
+  return setSession(response, user).json({ user: publicUser(user) })
 })
 
-app.get('/api/auth/config', (_request, response) => response.json({ googleClientId, passwordAuthEnabled: !isVercel }))
+app.get('/api/auth/config', (_request, response) => response.json({ googleClientId, passwordAuthEnabled: Boolean(sql) || !isVercel }))
 app.post('/api/auth/google', authLimiter, async (request, response) => {
   if (!googleClient) return response.status(503).json({ error: 'Google Sign-In has not been configured yet.' })
   const credential = String(request.body.credential || '')
