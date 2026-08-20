@@ -1,61 +1,256 @@
-# PixelShift Universal Image Converter
+<div align="center">
 
-A private, browser-based image workspace for HEIC/HEIF, JPG, PNG, WebP, GIF, BMP, AVIF, and SVG images. Convert formats, batch-resize images, compress to 25–200 KB, or remove backgrounds and replace them with transparent, white, red, blue, green, black, or a custom color. It supports mixed batches, individual files, folder selection, recursive folder drops, and one-click ZIP downloads.
+# PixelShift
 
-## Run locally
+### Your complete image workspace—fast, private, and built for the browser.
+
+Convert formats, resize batches, compress images to a target size, and remove backgrounds with on-device AI. No image uploads, no desktop software, and no watermarks.
+
+[**Launch PixelShift →**](https://pixelshift-image-converter.vercel.app)
+
+<br />
+
+[![Live on Vercel](https://img.shields.io/badge/Live_on_Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://pixelshift-image-converter.vercel.app)
+![React 18](https://img.shields.io/badge/React_18-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![Vite 6](https://img.shields.io/badge/Vite_6-646CFF?style=for-the-badge&logo=vite&logoColor=white)
+![Local processing](https://img.shields.io/badge/Images-Processed_locally-166B4F?style=for-the-badge&logo=shield&logoColor=white)
+
+</div>
+
+---
+
+## Live website
+
+PixelShift is deployed on Vercel with HTTPS:
+
+### [https://pixelshift-image-converter.vercel.app](https://pixelshift-image-converter.vercel.app)
+
+Use the stable URL above rather than a generated Vercel Preview URL.
+
+## Why PixelShift?
+
+PixelShift brings the image tasks people use every day into one focused workspace. Images are processed inside the browser whenever possible, keeping personal photos and project assets on the user's device.
+
+- **One workspace, four tools** — convert, resize, compress, and remove backgrounds.
+- **Private by design** — selected images are not uploaded to the application server.
+- **Batch friendly** — mix file types, import folders, preserve subfolders, and export ZIP archives.
+- **Modern authentication** — continue with Google or create an email/password account.
+- **Install-free** — works directly in a modern desktop or mobile browser.
+- **No watermarks** — downloaded results belong to the user.
+
+## Features
+
+| Tool | What it does | Output |
+| --- | --- | --- |
+| **Convert** | Converts mixed image batches with configurable quality | JPG, PNG, WebP |
+| **Resize** | Uses maximum bounds or exact dimensions, preserves aspect ratio, and can prevent upscaling | JPG, PNG, WebP |
+| **Compress** | Searches for the best WebP quality and progressively reduces dimensions to reach 25–200 KB | Optimized WebP |
+| **Remove background** | Runs ISNet locally with Fast, HD, and Ultra quality options; supports transparent and solid-color replacements | PNG or JPG |
+
+Additional workflow features include:
+
+- Individual file selection, folder selection, and recursive folder drag-and-drop
+- Parallel batch processing with adjustable concurrency
+- One-click downloads and multi-file ZIP export
+- Direct folder output through the File System Access API in supported browsers
+- Locally saved tool preferences
+- Native browser codecs with a libheif fallback for HEIC/HEIF files
+- WebGPU acceleration for background removal when available
+
+## Supported formats
+
+| Format | Input | Conversion output | Notes |
+| --- | :---: | :---: | --- |
+| HEIC / HEIF | ✓ | — | Decoded with native support or the `heic-to` fallback |
+| JPG / JPEG | ✓ | ✓ | Recommended for photographs and solid backgrounds |
+| PNG | ✓ | ✓ | Supports lossless and transparent output |
+| WebP | ✓ | ✓ | Used for target-size compression |
+| GIF | ✓ | — | Animated inputs export their first frame |
+| BMP | ✓ | — | Input support depends on browser decoding |
+| AVIF | ✓ | — | Input support depends on browser decoding |
+| SVG | ✓ | — | Rasterized before export |
+
+## Privacy and architecture
+
+```mermaid
+flowchart LR
+    User[User's browser] --> UI[React + Vite workspace]
+    UI --> Local[Canvas, codecs, and on-device AI]
+    Local --> Download[Local file or ZIP download]
+    UI --> Auth[Vercel authentication API]
+    Auth --> Google[Google Identity Services]
+    Auth --> Neon[(Neon Postgres)]
+```
+
+Image bytes are handled by browser APIs and the background-removal model. The application server handles authentication requests, not the selected image files. AI model assets are streamed through the Vercel Function and cached by the browser.
+
+## Authentication
+
+PixelShift supports two production sign-in methods:
+
+1. **Google Sign-In** — the browser receives a Google ID token, and the server verifies its audience and signature with `google-auth-library`.
+2. **Email and password** — accounts are stored in Neon Postgres with bcrypt password hashes.
+
+Successful authentication creates a seven-day JWT session in an HttpOnly, Secure, SameSite cookie. Authentication endpoints are rate-limited, and database queries use parameterized templates.
+
+Local development uses `server/data/users.json` when `DATABASE_URL` is not configured. That file is excluded from Git.
+
+## Tech stack
+
+| Layer | Technology |
+| --- | --- |
+| Frontend | React 18, Vite 6, Lucide React |
+| Image conversion | Canvas API, native browser codecs, `heic-to` |
+| Background removal | `@imgly/background-removal`, ONNX Runtime Web |
+| ZIP export | JSZip |
+| API | Express 5 on a Vercel Function |
+| Authentication | Google Identity Services, bcrypt, JWT |
+| Database | Neon serverless Postgres |
+| Hosting | Vercel |
+
+## Getting started locally
+
+### Prerequisites
+
+- Node.js 20 or newer
+- npm
+- A modern browser such as Chrome, Edge, Firefox, or Safari
+
+### Installation
 
 ```bash
+git clone https://github.com/Avdhut30/pixelshift-image-converter.git
+cd pixelshift-image-converter
 npm install
+```
+
+Create a `.env` file from `.env.example` and set the values you need:
+
+```env
+JWT_SECRET=replace-with-a-long-random-secret
+GOOGLE_CLIENT_ID=replace-with-your-web-client-id.apps.googleusercontent.com
+DATABASE_URL=postgresql://user:password@host/database?sslmode=require
+NODE_ENV=development
+PORT=8787
+HOST=127.0.0.1
+```
+
+`GOOGLE_CLIENT_ID` and `DATABASE_URL` are optional for basic local development. Without `DATABASE_URL`, manual accounts use the ignored local JSON store.
+
+Start the frontend and API together:
+
+```bash
 npm run dev
 ```
 
-The development command starts both the Vite app and the authentication API. Open the Vite URL shown in the terminal. Accounts are stored locally in `server/data/users.json`, which is excluded from Git.
+Open the Vite URL printed in the terminal, normally `http://localhost:5173`.
 
-## Google Sign-In
+## Available scripts
 
-Create an OAuth 2.0 client in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials) with application type **Web application**. Add your local URL (for example, `http://localhost:5173`) and production HTTPS URL as **Authorized JavaScript origins**, then set the same client ID in `.env`:
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Starts Vite and the authentication API in watch mode |
+| `npm run dev:web` | Starts only the Vite frontend |
+| `npm run dev:api` | Starts only the Express API |
+| `npm run build` | Creates the production Vite bundle in `dist/` |
+| `npm start` | Serves the built frontend and API with Express |
+| `npm run preview` | Builds and starts the combined production server |
 
-```env
-GOOGLE_CLIENT_ID=1234567890-example.apps.googleusercontent.com
+## Environment variables
+
+| Variable | Required | Purpose |
+| --- | :---: | --- |
+| `JWT_SECRET` | Production | Signs secure user sessions; use a long random value |
+| `GOOGLE_CLIENT_ID` | For Google login | OAuth 2.0 Web Client ID from Google Cloud |
+| `DATABASE_URL` | For production password login | Postgres connection string; provisioned automatically by the Neon Vercel integration |
+| `NODE_ENV` | Recommended | Use `production` in deployed environments |
+| `PORT` | No | Express port; defaults to `8787` |
+| `HOST` | No | Express host; defaults to `127.0.0.1` |
+
+Never commit `.env` files or database credentials.
+
+## Google OAuth setup
+
+1. Open [Google Cloud Credentials](https://console.cloud.google.com/apis/credentials).
+2. Create an OAuth 2.0 client with application type **Web application**.
+3. Add these **Authorized JavaScript origins**:
+
+   ```text
+   http://localhost:5173
+   https://pixelshift-image-converter.vercel.app
+   ```
+
+4. Set the generated client ID as `GOOGLE_CLIENT_ID`.
+
+A Google client secret and redirect URI are not required for the Google Identity Services button flow used by PixelShift.
+
+## Deploying to Vercel
+
+The repository includes [`vercel.json`](./vercel.json), which configures the Vite build, SPA fallback, API rewrites, serverless function resources, and required browser headers.
+
+1. Import the repository at [vercel.com/new](https://vercel.com/new).
+2. Add `JWT_SECRET` and `GOOGLE_CLIENT_ID` in **Project Settings → Environment Variables**.
+3. Connect [Neon Postgres](https://vercel.com/marketplace/neon) from the Vercel Marketplace. The integration supplies `DATABASE_URL`.
+4. Enable the variables for Production and any Preview environments that need authentication.
+5. Deploy or redeploy the project.
+
+The `pixelshift_users` table is created automatically on the first email registration request.
+
+## Project structure
+
+```text
+pixelshift-image-converter/
+├── api/
+│   └── index.js             # Vercel Function entry point
+├── server/
+│   └── index.js             # Express API, auth, database, and AI asset proxy
+├── src/
+│   ├── converter-frame.js   # Isolated HEIC fallback worker frame
+│   ├── main.jsx             # React application and image workflows
+│   └── styles.css           # Responsive product UI
+├── converter-frame.html     # Hidden HEIC decoding frame
+├── index.html               # Vite entry document and metadata
+├── vercel.json              # Vercel build, function, rewrite, and header config
+└── vite.config.js           # Vite development and proxy configuration
 ```
 
-No Google client secret is required for this button flow. The browser sends Google's signed ID token to the PixelShift API, which verifies it with `google-auth-library` before creating the normal secure session cookie. Restart the development server after changing `.env`.
+## Browser notes
 
-Conversion happens entirely in the browser using native image codecs first and `heic-to`/libheif as the HEIC fallback; selected images are never uploaded. Animated inputs are exported as a single frame.
+- Chrome and Edge provide the fullest folder workflow, including direct folder output.
+- Other modern browsers support file selection, conversion, and regular downloads.
+- WebGPU is used for AI acceleration when available; ONNX Runtime Web provides the fallback.
+- The first background-removal run downloads a model of approximately 44–176 MB depending on the chosen quality. It is cached for later use.
 
-The resize tool supports maximum-bound resizing with the original aspect ratio, exact dimensions, optional upscaling prevention, and JPG, PNG, or WebP output. Tool preferences are saved locally in the browser for the next visit.
+## Security notes
 
-Compression exports optimized WebP files. It searches for the highest quality that fits the selected size, then progressively reduces dimensions only when quality adjustment alone cannot reach the target.
+- Passwords are hashed with bcrypt and are never stored as plain text.
+- Session tokens are stored in HttpOnly cookies and signed with `JWT_SECRET`.
+- Google ID tokens are verified on the server for the configured OAuth audience.
+- Helmet security headers and authentication rate limits are enabled.
+- Postgres queries use the Neon driver's parameterized template API.
+- Production password authentication is shown only when a database connection exists.
 
-Background removal uses on-device ISNet AI through `@imgly/background-removal`. Users can choose Fast (quantized), HD (FP16), or Ultra (full-precision) quality; Ultra is the default and WebGPU acceleration is used when available. The selected model is downloaded and cached on first use, while images remain local. Transparent results export as PNG and solid-color results as high-quality JPG. This dependency is distributed under the AGPL license—review its license before commercial distribution.
+## Contributing
 
-For large folders, use **Convert & save folder** in Chrome or Edge. The app writes each converted file directly to the chosen destination and preserves subfolders, avoiding the memory cost of holding every output for download.
+Contributions and constructive feedback are welcome.
 
-## Authentication and production
+1. Fork the repository.
+2. Create a focused feature branch.
+3. Make and test your changes.
+4. Open a pull request describing the change and its impact.
 
-Authentication uses bcrypt password hashes and a seven-day JWT stored in an HttpOnly, SameSite cookie. Before deploying, copy `.env.example` to `.env`, set a long random `JWT_SECRET`, build the client, and start the combined server:
+For bugs, include the browser, operating system, input format, and steps needed to reproduce the problem. Do not attach private images to public issues.
 
-```bash
-npm run build
-npm start
-```
+## License and third-party software
 
-The JSON user store is suitable for a local or single-instance deployment. For a horizontally scaled production deployment, replace it with a shared database while keeping the API contract unchanged.
+This repository does not currently include a project-wide license. Add an appropriate license before inviting redistribution or reuse.
 
-## Deploy to Vercel
+Background removal is powered by `@imgly/background-removal`, which is distributed under the AGPL. Review its license and the licenses of all dependencies before commercial distribution.
 
-The repository includes `vercel.json` and a Vercel Function that serves the authentication API and streams the background-removal model assets. Connect the repository at [vercel.com/new](https://vercel.com/new); Vercel will detect the Vite build settings automatically.
+---
 
-Add these environment variables in **Project Settings → Environment Variables**, then redeploy:
+<div align="center">
 
-```env
-JWT_SECRET=a-long-random-secret
-GOOGLE_CLIENT_ID=1234567890-example.apps.googleusercontent.com
-DATABASE_URL=postgresql://user:password@host/database?sslmode=require
-```
+Built by [Avdhut30](https://github.com/Avdhut30) · [Open the live app](https://pixelshift-image-converter.vercel.app)
 
-The simplest setup is to connect [Neon Postgres from the Vercel Marketplace](https://vercel.com/marketplace/neon) to the PixelShift project. Confirm that the integration creates `DATABASE_URL` for Production (and Preview when desired).
-
-In the Google Cloud OAuth client, add both `http://localhost:5173` and the production Vercel HTTPS domain as **Authorized JavaScript origins**. A Google client secret is not needed.
-
-Vercel Functions do not provide a persistent writable filesystem, so production email/password accounts use Postgres through `DATABASE_URL`. The required `pixelshift_users` table is created automatically on the first registration request. Google authentication remains stateless and local development falls back to `server/data/users.json` when no database URL is configured.
+</div>
