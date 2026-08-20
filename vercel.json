@@ -1,0 +1,25 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 300,
+      "memory": 2048
+    }
+  },
+  "rewrites": [
+    { "source": "/api/:route*", "destination": "/api/index?route=:route" },
+    { "source": "/ai-assets/:asset*", "destination": "/api/index?asset=:asset" },
+    { "source": "/((?!api/|ai-assets/).*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin-allow-popups" }
+      ]
+    }
+  ]
+}

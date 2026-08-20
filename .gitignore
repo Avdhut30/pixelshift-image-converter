@@ -3,3 +3,5 @@ dist/
 .env
 server/data/users.json
 server/data/users.json.tmp
+
+.vercel
